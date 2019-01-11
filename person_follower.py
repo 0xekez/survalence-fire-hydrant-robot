@@ -1,11 +1,3 @@
-## Some of the code is copied from Google's example at
-## https://github.com/tensorflow/models/blob/master/research/object_detection/object_detection_tutorial.ipynb
-
-## and some is copied from Dat Tran's example at
-## https://github.com/datitran/object_detector_app/blob/master/object_detection_app.py
-
-
-# Import packages
 import os
 import cv2
 import numpy as np
@@ -13,39 +5,55 @@ from picamera.array import PiRGBArray
 from picamera import PiCamera
 import tensorflow as tf
 import sys
+import RPi.GPIO as GPIO
+from time import sleep
+# This is needed to get the utils from the parent dir
+sys.path.append('..')
+from utils import label_map_util
+
+def set_angle(angle):
+    duty = angle/18+2.5
+    # turn it on
+    GPIO.output(3, True)
+    # give it an angle
+    pwm.ChangeDutyCycle(duty)
+    # give time to get to angle
+    sleep(3)
+    # turn off the pin
+    GPIO.output(3, False)
+    pwm.ChangeDutyCycle(0)
 
 # Set up camera constants
 IM_WIDTH = 640    #Use smaller resolution for
 IM_HEIGHT = 480   #slightly faster framerate
-
-# This is needed since the working directory is the object_detection folder.
-sys.path.append('..')
-
-# Import utilites
-from utils import label_map_util
-from utils import visualization_utils as vis_util
-
 # Name of the directory containing the object detection module we're using
 MODEL_NAME = 'ssdlite_mobilenet_v2_coco_2018_05_09'
-
 # Grab path to current working directory
 CWD_PATH = os.getcwd()
-
 # Path to frozen detection graph .pb file, which contains the model that is used
 # for object detection.
 PATH_TO_CKPT = os.path.join(CWD_PATH,MODEL_NAME,'frozen_inference_graph.pb')
-
 # Path to label map file
 PATH_TO_LABELS = os.path.join(CWD_PATH,'data','mscoco_label_map.pbtxt')
-
 # Number of classes the object detector can identify
 NUM_CLASSES = 90
 
-## Load the label map.
-# Label maps map indices to category names, so that when the convolution
-# network predicts `5`, we know that this corresponds to `airplane`.
-# Here we use internal utility functions, but anything that returns a
-# dictionary mapping integers to appropriate string labels would be fine
+##########
+# SERVO
+##########
+DISTANCE_THRESHOLD = 0.1
+# set naming for pins
+GPIO.setmode(GPIO.BOARD)
+# make pin 3 output PWN
+GPIO.setup(3, GPIO.OUT)
+# set pin 3 PWN to 5 hz
+pwm = GPIO.PWM(3, 50)
+# set the servo to 0 degrees
+pwm.start(90/18+2.5)
+current_angle = 90
+
+
+# Load the label map.
 label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
 categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
 category_index = label_map_util.create_category_index(categories)
@@ -60,7 +68,6 @@ with detection_graph.as_default():
         tf.import_graph_def(od_graph_def, name='')
 
     sess = tf.Session(graph=detection_graph)
-
 
 # Define input and output tensors (i.e. data) for the object detection classifier
 # Input tensor is the image
@@ -78,15 +85,7 @@ detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 # Number of objects detected
 num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 
-# Initialize frame rate calculation
-frame_rate_calc = 1
-freq = cv2.getTickFrequency()
-font = cv2.FONT_HERSHEY_SIMPLEX
-
-# Initialize camera and perform object detection.
-# The camera has to be set up and used differently depending on if it's a
-# Picamera or USB webcam.
-
+# Initialize camera
 camera = PiCamera()
 camera.resolution = (IM_WIDTH,IM_HEIGHT)
 camera.framerate = 10
@@ -107,8 +106,6 @@ the four corners cords are given by:
 '''
 
 for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=True):
-
-    t1 = cv2.getTickCount()
 
     # Acquire frame and expand frame dimensions to have shape: [1, None, None, 3]
     # i.e. a single-column array, where each item in the column has the pixel RGB value
@@ -140,33 +137,25 @@ for frame1 in camera.capture_continuous(rawCapture, format="bgr",use_video_port=
     if  people:
         person = min(people, key=lambda a: abs(a-0.5))
         print("{}\nchoosing:\t{}".format(people, person))
-
-    # visulaize the results:
-    # vis_util.visualize_boxes_and_labels_on_image_array(
-    #    frame,
-    #    np.squeeze(boxes),
-    #    np.squeeze(classes).astype(np.int32),
-    #    np.squeeze(scores),
-    #    category_index,
-    #    use_normalized_coordinates=True,
-    #    line_thickness=8,
-    #    min_score_thresh=0.40)
-
-    cv2.putText(frame,"FPS: {0:.2f}".format(frame_rate_calc),(30,50),font,1,(255,255,0),2,cv2.LINE_AA)
+    '''
+    now that we have a person, we need to make our movement
+    movement should add A NUMBER to the current_angle depending
+    on where the person was found
+    current_angle should be locked between 0 and 180 degrees
+    movement should only happen if the center of the person is more than
+    A PERCENTAGE of the screen away from the center
+    '''
+    distance = abs(person-0.5)
+    if distance > DISTANCE_THRESHOLD:
+        if person > 0.5:
+            current_angle -= 2
+        else:
+            current_angle += 2
+        set_angle(current_angle)
 
     # All the results have been drawn on the frame, so it's time to display it.
     cv2.imshow('Object detector', frame)
-
-    t2 = cv2.getTickCount()
-    time1 = (t2-t1)/freq
-    frame_rate_calc = 1/time1
-
-    # Press 'q' to quit
-    if cv2.waitKey(1) == ord('q'):
-        break
-
     rawCapture.truncate(0)
 
 camera.close()
-
 cv2.destroyAllWindows()

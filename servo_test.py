@@ -12,7 +12,7 @@ def set_angle(angle):
     # turn off the pin
     GPIO.output(3, False)
     pwm.ChangeDutyCycle(0)
-    
+
 
 # set naming for pins
 GPIO.setmode(GPIO.BOARD)
